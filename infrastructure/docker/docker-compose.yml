@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # 1. STORAGE: ELASTICSEARCH (Single Node)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
+    container_name: siem-elasticsearch
+    environment:
+      - node.name=siem-node-1
+      - cluster.name=light-siem-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"  
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - siem-network
+
+  # 2. VISUALIZATION: KIBANA
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.9
+    container_name: siem-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - siem-network
+
+  # 3. BACKEND: PYTHON FASTAPI
+  siem-backend:
+    build:
+      context: ../../backend  
+      dockerfile: Dockerfile
+    container_name: siem-core-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../backend/src:/app/src  
+    environment:
+      - ES_HOST=elasticsearch
+      - ES_PORT=9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - siem-network
+
+  waf:
+    image: owasp/modsecurity-crs:nginx
+    container_name: siem-waf
+    ports:
+      - "8080:8080"
+    environment:
+      - BACKEND=http://siem-core-backend:8000
+      - PARANOIA=1
+      - PROXY_SSL=off
+    depends_on:
+      - siem-backend
+    networks:
+      - siem-network
+
+
+volumes:
+  es_data:
+    driver: local
+
+networks:
+  siem-network:
+    driver: bridge
